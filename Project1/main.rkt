@@ -138,7 +138,7 @@
 
 (define traverseStatements
   (lambda (statements state)
-    (if (null? (statements))
+    (if (null? statements)
         state
         (traverseStatements (cdr statements) (M_state (car statements) state)))))
 
