@@ -13,6 +13,14 @@
   (lambda (expression)
     (caddr expression)))
 
+(define operant_3
+  (lambda (expression)
+    (cadddr expression)))
+
+(define have_operant_3
+  (lambda (expression)
+    (not (null?(cdddr expression)))))
+
 (define pair_value
   (lambda (pair)
     (car (cdr pair))))
@@ -136,17 +144,40 @@
   (lambda (var value state)
     (addToState var value state)))
 
+;This traverse through the statements and build up the state 
 (define traverseStatements
   (lambda (statements state)
     (if (null? statements)
         state
         (traverseStatements (cdr statements) (M_state (car statements) state)))))
 
+;This method take in a filename, parse it into statements and traverse the state. Then return what is stored in the return variable.
 (define runFile
   (lambda (filename)
-    (get_var_value 'return (traverseStatements (parser filename) '()))))
+    (parse_value (get_var_value 'return (traverseStatements (parser filename) '())))))
 
-;TODO: Finish this method
+;Parse resulting value into java-like format. Only accept int or bool
+(define parse_value
+  (lambda (value)
+    (cond
+      ((boolean? value) (if value 'true 'false))
+      ((integer? value) value)
+      (else (error 'value "Value should be int or boolean")))))
+
+(define myIf
+  (lambda (expression state)
+    (cond
+      ((not (boolean? (M_value (operant_1 expression) state))) (error 'expression "condition should be boolean"))
+      ((M_value (operant_1 expression) state) (M_state (operant_2 expression) state))
+      ((not (have_operant_3 expression)) state)
+      (else (M_state (operant_3 expression) state)))))
+
+(define myWhile
+  (lambda (expression state)
+    (cond
+      ((M_value (operant_1 expression) state) (myWhile expression (M_state (operant_2 expression) state)))
+      (else state))))
+
 (define M_state
   (lambda (expression state)
     (cond
@@ -155,6 +186,8 @@
                                             (myInitialize (operant_1 expression) (M_value (operant_2 expression) state) state)))
       ((eq? (operator expression) '=) (myAssign (operant_1 expression) (M_value (operant_2 expression) state) state))
       ((eq? (operator expression) 'return) (myInitialize 'return (M_value (operant_1 expression) state) state))
+      ((eq? (operator expression) 'if) (myIf expression state))
+      ((eq? (operator expression) 'while) (myWhile expression state))
       )))
 
 
@@ -167,15 +200,15 @@
           ((eq? (operator expression) '||) (myOr (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
           ((eq? (operator expression) '!) (myNot (M_value (operant_1 expression) state)))
           ((eq? (operator expression) '>) (myLarger (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
-          ((eq? (operator expression) '>=) (myLarger (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
-          ((eq? (operator expression) '<) (myLarger (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
-          ((eq? (operator expression) '<=) (myLarger (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
+          ((eq? (operator expression) '>=) (myLargerEqual (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
+          ((eq? (operator expression) '<) (mySmaller (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
+          ((eq? (operator expression) '<=) (mySmallerEqual (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
           ((eq? (operator expression) '==) (eq? (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
           ((eq? (operator expression) '!=) (not (eq? (M_value (operant_1 expression) state) (M_value (operant_2 expression) state))))
           ((eq? (operator expression) '+) (myAdd (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
-          ((eq? (operator expression) '-) (if (haveOneOperant? expression)
-                                              (mySubtract (M_value (operant_1 expression) state) (M_value (operant_2 expression) state))
-                                              (mySubtract 0 (M_value (operant_1 expression) state))))
+          ((eq? (operator expression) '-) (if (haveOneOperant? expression)    
+                                              (mySubtract 0 (M_value (operant_1 expression) state))
+                                          (mySubtract (M_value (operant_1 expression) state) (M_value (operant_2 expression) state))))
           ((eq? (operator expression) '*) (myMultiply (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
           ((eq? (operator expression) '/) (myQuotient (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
           ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state) (M_value (operant_2 expression) state)))
