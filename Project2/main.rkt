@@ -1,13 +1,13 @@
 #lang racket
 (require "simpleParser.rkt")
 
-(define popState
+(define popFrame
   (lambda (state)
     (cdr state)))
 
-(define pushState
+(define pushFrame
   (lambda (state)
-    (cons state '())))
+    (cons '() state)))
 
 
 
@@ -43,8 +43,15 @@
   (lambda (expression state)
     (cond
       ((null? state) '())
-      ((eq? expression (car (car state))) (pair_value (car state)))
-      (else (get_var_value expression (cdr state))))))
+      ((null? (get_var_value_frame expression (car state))) (get_var_value expression (cdr state)))
+      (else (get_var_value_frame expression (car state))))))
+
+(define get_var_value_frame
+  (lambda (expression frame)
+    (cond
+      ((null? frame) '())
+      ((eq? expression (car (car frame))) (pair_value (car frame)))
+      (else (get_var_value_frame expression (cdr frame))))))
 
 ;interpret and
 (define myAnd
@@ -166,24 +173,35 @@
 ;add pair of key and value to state
 (define addToState
   (lambda (var value state)
-    (cons (toKeyValuePair var value) state)))
+    (cons (cons (toKeyValuePair var value) (car state)) (cdr state))))
 
 ;check if variable has been intitialized
 (define initialized?
   (lambda (var state)
     (cond
       ((null? state) #f)
-      ((eq? var (car (car state))) #t)
+      ((initializedFrame? var (car state)) #t)
       (else (initialized? var (cdr state))))))
+
+(define initializedFrame?
+  (lambda (var frame)
+    (cond
+      ((null? frame) #f)
+      ((eq? var (car (car frame))) #t)
+      (else (initializedFrame? var (cdr frame))))))
 
 ;update state
 (define updateState
   (lambda (var value state)
-    (cond
-      ((null? state) '())
-      ((eq? var (car (car state))) (cons (toKeyValuePair var value) (cdr state)))
-      (else (cons (car state) (updateState var value (cdr state)))))))
+    (if (null? state) '()
+        (cons (updateStateFrame var value (car state)) (updateState var value (cdr state))))))
 
+(define updateStateFrame
+  (lambda (var value frame)
+    (cond
+      ((null? frame) '())
+      ((eq? var (car (car frame))) (cons (toKeyValuePair var value) (cdr frame)))
+      (else (cons (car frame) (updateStateFrame var value (cdr frame)))))))
 
 ;initialize variable with its value
 (define myInitialize
@@ -208,9 +226,10 @@
       (else (error 'value "Value should be int or boolean")))))
 
 ;This method take in a filename, parse it into statements and traverse the state. Then return what is stored in the return variable.
+;TODO(Khoi): This probably need to refactor so that return can be called in a block and not got pop out of the stack
 (define runFile
   (lambda (filename)
-    (parse_value (get_var_value 'return (traverseStatements (parser filename) '())))))
+    (parse_value (get_var_value 'return (traverseStatements (parser filename) '(()))))))
 
 
 ;Apply M_state of operant 1 to M_state of operant 2
@@ -219,7 +238,7 @@
     (if (have_one_operant? expression)
         (error 'expression "have only one operant")
         (M_state (operant_2 expression) (M_state (operant_1 expression) state)))))
-      
+
 ;M_state operation, this also consider nested equal sign
 (define M_state
   (lambda (expression state)
@@ -248,6 +267,7 @@
       ((eq? (operator expression) '*) (2_operants_M_state expression state))
       ((eq? (operator expression) '/) (2_operants_M_state expression state))
       ((eq? (operator expression) '%) (2_operants_M_state expression state))
+      ((eq? (operator expression) 'begin) (popFrame (traverseStatements (cdr expression) (pushFrame state))))
       (else state)
       )))
 
