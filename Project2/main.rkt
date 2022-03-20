@@ -146,43 +146,68 @@
 
 ;interpret if
 (define myIf
-  (lambda (expression state break continue err)
+  (lambda (expression state break continue throw return)
     (cond
-      ((not (boolean? (M_value (operant_1 expression) state break continue err))) (error 'expression "condition should be boolean"))
-      ((M_value (operant_1 expression) state break continue err) (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err))
+      ((not (boolean? (M_value (operant_1 expression) state break continue throw return))) (error 'expression "condition should be boolean"))
+      ((M_value (operant_1 expression) state break continue throw return) (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return))
       ((not (have_operant_3 expression)) state)
-      (else (M_state (operant_3 expression) (M_state (operant_1 expression) state break continue err) break continue err)))))
+      (else (M_state (operant_3 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))))
 
 ;interpret while
 (define myWhile
-  (lambda (expression state break continue err)
+  (lambda (expression state break continue throw return)
     (cond
-      ((M_value (operant_1 expression) state break continue err) (myWhile expression (call/cc (lambda (newContinue) (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue err) break newContinue err))) break continue err))
-      (else (M_state (operant_1 expression) state break continue err)))))
+      ((M_value (operant_1 expression) state break continue throw return) (myWhile expression (call/cc (lambda (newContinue) (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break newContinue throw return))) break continue throw return))
+      (else (M_state (operant_1 expression) state break continue throw return)))))
+
+(define catchVar (lambda (catchStatement) (car (operant_1 catchStatement))))
+(define catchBody operant_2)
+
+(define newThrowCatchHandler
+  (lambda (catchStatement state break continue throw return jump finallyBlock)
+    (cond 
+      ((null? catchStatement) (lambda (ex env) (throw ex (traverseStatements finallyBlock env break continue throw return))))
+      ((not (eq? 'catch (operator catchStatement))) (error "Incorrect catch statement"))
+      (else (lambda (ex s)
+            (jump (traverseStatements finallyBlock
+                           (popFrame (traverseStatements
+                                      (operant_2 catchStatement)
+                                      (myInitialize (catchVar catchStatement) ex (pushFrame s))
+                                      (lambda (s1) (break (popFrame s1)))
+                                      (lambda (s1) (continue (popFrame s1)))
+                                      (lambda (v s1) (throw v (popFrame s1)))
+                                      return))
+                           break continue throw return)))))))
+                                                        
+(define getCatchStatement operant_2)
 
 ;interpret try
 (define myTry
-  (lambda (expression state break continue throw err)
-       (let* ((finally-block (make-finally-block expression))
-              (try-block (operant_1 expression))
-              (new-break (lambda (env) (break (traverseStatements finally-block env break continue throw))))
-              (new-continue (lambda (env) (continue (traverseStatements finally-block env break continue throw))))
-              (new-throw))
-         (traverseStatements finally-block
-                          (traverseStatements try-block state new-break new-continue new-throw err)
-                          break continue throw err))))))
+  (lambda (expression state break continue throw return)
+    (call/cc
+     (lambda (jump)
+       (let* ((finallyBlock (getFinallyBlock (getFinallyStatement expression)))
+              (tryBlock (operant_1 expression))
+              (newReturn (lambda (env) (return (traverseStatements finallyBlock state break continue throw return))))
+              (newBreak (lambda (env) (break (traverseStatements finallyBlock state break continue throw return))))
+              (newContinue (lambda (env) (continue (traverseStatements finallyBlock state break continue throw return))))
+              (newThrow (newThrowCatchHandler (getCatchStatement expression) state break continue throw return jump finallyBlock)))
+         (traverseStatements finallyBlock
+                          (traverseStatements tryBlock state newBreak newContinue newThrow newReturn)
+                          break continue throw return))))))
+(define statementType operator)
+
+(define getFinallyStatement operant_3)
 
 ;get the finally block
-(define make-finally-block
-  (lambda (expression)
+;TODO: Fix
+(define getFinallyBlock
+  (lambda (finallyStatement)
     (cond
-      ((not (have_operant_3 expression)) ())
-      (else (operant_3 expression)))))
+      ((null? finallyStatement) '() )
+      ((not (eq? (statementType finallyStatement) 'finally)) (error "Wrong finally format"))
+      (else (cadr finallyStatement)))))
 
-;get the catch variable
-(define catch-var
-  (lambda (catch-statement)
-    (car (operant_1 catch-statement))))
 
 
 
@@ -238,10 +263,10 @@
 
 ;This traverse through the statements and build up the state 
 (define traverseStatements
-  (lambda (statements state break continue throw err)
+  (lambda (statements state break continue throw return)
     (if (null? statements)
         state
-        (traverseStatements (cdr statements) (M_state (car statements) state break continue throw err) break continue throw err))))
+        (traverseStatements (cdr statements) (M_state (car statements) state break continue throw return) break continue throw return))))
 
 ;Parse resulting value into java-like format. Only accept int or bool
 (define parse_value
@@ -252,85 +277,92 @@
       (else (error 'value "Value should be int or boolean")))))
 
 (define noLoopError
-  (lambda ()
+  (lambda (state)
     (error "No loop to break")))
 
-(define errorWithMessage
-  (lambda (msg)
-    (error msg)))
+(define defaultError
+  (lambda (ex state)
+    (error "Error of: " ex)))
 
 ;This method take in a filename, parse it into statements and traverse the state. Then return what is stored in the return variable.
 ;TODO(Khoi): This probably need to refactor so that return can be called in a block and not got pop out of the stack
 (define runFile
   (lambda (filename)
-    (parse_value (get_var_value 'return (traverseStatements (parser filename) '(()) noLoopError noLoopError errorWithMessage)))))
-
+    (call/cc (lambda (return) (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError return)))))
 
 ;Apply M_state of operant 1 to M_state of operant 2
 (define 2_operants_M_state
-  (lambda (expression state break continue throw err)
+  (lambda (expression state break continue throw return)
     (if (have_one_operant? expression)
         (error 'expression "have only one operant")
-        (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue throw err) break continue throw err))))
+        (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return))))
 
 ;M_state operation, this also consider nested equal sign
 (define M_state
-  (lambda (expression state break continue throw err)
+  (lambda (expression state break continue throw return)
     (cond
       ((not (list? expression)) state)
       ((eq? (operator expression) 'var) (if (have_one_operant? expression)
                                             (myInitialize (operant_1 expression) '() state)
-                                            (myInitialize (operant_1 expression) (M_value (operant_2 expression) state break continue throw err) (M_state (operant_2 expression) state break continue throw err))))
-      ((eq? (operator expression) '=) (myAssign (operant_1 expression) (M_value (operant_2 expression) state break continue throw err) (M_state (operant_2 expression) state break continue throw err)))
-      ((eq? (operator expression) 'return) (myInitialize 'return (M_value (operant_1 expression) state break continue throw err) (M_state (operant_1 expression) state break continue throw err)))
-      ((eq? (operator expression) 'if) (myIf expression state break continue throw err))
+                                            (myInitialize (operant_1 expression) (M_value (operant_2 expression) state break continue throw return) (M_state (operant_2 expression) state break continue throw return))))
+      ((eq? (operator expression) '=) (myAssign (operant_1 expression) (M_value (operant_2 expression) state break continue throw return) (M_state (operant_2 expression) state break continue throw return)))
+      ((eq? (operator expression) 'return) (M_value (operant_1 expression) state break continue throw return))
+      ((eq? (operator expression) 'if) (myIf expression state break continue throw return))
       ((eq? (operator expression) 'while) (call/cc (lambda (newBreak)
-                                                   (myWhile expression state newBreak continue throw err))))
-      ((eq? (operator expression) '&&) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '||) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '!) (M_state (operant_1 expression) state break continue throw err))
-      ((eq? (operator expression) '>) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '>=) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '<) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '<=) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '==) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '!=) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '+) (2_operants_M_state expression state break continue throw err))
+                                                   (myWhile expression state newBreak continue throw return))))
+      ((eq? (operator expression) '&&) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '||) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '!) (M_state (operant_1 expression) state break continue throw return))
+      ((eq? (operator expression) '>) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '>=) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '<) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '<=) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '==) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '!=) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '+) (2_operants_M_state expression state break continue throw return))
       ((eq? (operator expression) '-) (if (have_one_operant? expression)
-                                          (M_state (operant_1 expression) state break continue throw err)
-                                          (2_operants_M_state expression state break continue throw err)))
-      ((eq? (operator expression) '*) (2_operants_M_state expression state break continue throw err))
-      ((eq? (operator expression) '/) (2_operants_M_state expression state  break continue throw err))
-      ((eq? (operator expression) '%) (2_operants_M_state expression state  break continue throw err))
-      ((eq? (operator expression) 'begin) (popFrame (traverseStatements (cdr expression) (pushFrame state) break continue throw err)))
-      ((eq? (operator expression) 'break) (break (popFrame state))) ;What if there is only 1 element and no new frame
-      ((eq? (operator expression) 'continue) (continue (popFrame state)))
-      ((eq? (operator expression) 'try) (myTry expression state break continue throw err))
+                                          (M_state (operant_1 expression) state break continue throw return)
+                                          (2_operants_M_state expression state break continue throw return)))
+      ((eq? (operator expression) '*) (2_operants_M_state expression state break continue throw return))
+      ((eq? (operator expression) '/) (2_operants_M_state expression state  break continue throw return))
+      ((eq? (operator expression) '%) (2_operants_M_state expression state  break continue throw return))
+      ((eq? (operator expression) 'begin) (popFrame
+                                           (traverseStatements
+                                            (cdr expression)
+                                            (pushFrame state)
+                                            (lambda (state) (break (popFrame state)))
+                                            (lambda (state) (continue (popFrame state)))
+                                            throw
+                                            return)))
+      ((eq? (operator expression) 'break) (break state)) ;What if there is only 1 element and no new frame
+      ((eq? (operator expression) 'continue) (continue state))
+      ((eq? (operator expression) 'try) (myTry expression state break continue throw return))
+      ((eq? (operator expression) 'throw) (throw (M_value (operant_1 expression) state break continue throw return) state))
       (else state)
       )))
 
 ;M_value operation, this also consider nested equal sign
 (define M_value
-  (lambda (expression state break continue err)
+  (lambda (expression state break continue throw return)
     (if (list? expression)
         (cond
-          ((eq? (operator expression) '&&) (myAnd (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err )))
-          ((eq? (operator expression) '||) (myOr (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '!) (myNot (M_value (operant_1 expression) state break continue err)))
-          ((eq? (operator expression) '>) (myLarger (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '>=) (myLargerEqual (M_value (operant_1 expression) state) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '<) (mySmaller (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '<=) (mySmallerEqual (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '==) (eq? (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '!=) (not (eq? (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err))))
-          ((eq? (operator expression) '+) (myAdd (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
+          ((eq? (operator expression) '&&) (myAnd (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return )))
+          ((eq? (operator expression) '||) (myOr (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '!) (myNot (M_value (operant_1 expression) state break continue throw return)))
+          ((eq? (operator expression) '>) (myLarger (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '>=) (myLargerEqual (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '<) (mySmaller (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '<=) (mySmallerEqual (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '==) (eq? (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '!=) (not (eq? (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return))))
+          ((eq? (operator expression) '+) (myAdd (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '-) (if (have_one_operant? expression)    
-                                              (mySubtract 0 (M_value (operant_1 expression) state break continue err))
-                                          (mySubtract (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err))))
-          ((eq? (operator expression) '*) (myMultiply (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '/) (myQuotient (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state break continue err) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue err) break continue err)))
-          ((eq? (operator expression) '=) (M_value (operant_2 expression) state break continue err))
+                                              (mySubtract 0 (M_value (operant_1 expression) state break continue throw return))
+                                          (mySubtract (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return))))
+          ((eq? (operator expression) '*) (myMultiply (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '/) (myQuotient (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
+          ((eq? (operator expression) '=) (M_value (operant_2 expression) state break continue throw return))
           )          
         (cond
           ((eq? expression 'true) #t)
