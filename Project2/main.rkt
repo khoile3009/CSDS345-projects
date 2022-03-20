@@ -288,7 +288,7 @@
 ;TODO(Khoi): This probably need to refactor so that return can be called in a block and not got pop out of the stack
 (define runFile
   (lambda (filename)
-    (call/cc (lambda (return) (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError return)))))
+    (parse_value (get_var_value 'return (call/cc (lambda (return) (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError return)))))))
 
 ;Apply M_state of operant 1 to M_state of operant 2
 (define 2_operants_M_state
@@ -306,7 +306,7 @@
                                             (myInitialize (operant_1 expression) '() state)
                                             (myInitialize (operant_1 expression) (M_value (operant_2 expression) state break continue throw return) (M_state (operant_2 expression) state break continue throw return))))
       ((eq? (operator expression) '=) (myAssign (operant_1 expression) (M_value (operant_2 expression) state break continue throw return) (M_state (operant_2 expression) state break continue throw return)))
-      ((eq? (operator expression) 'return) (M_value (operant_1 expression) state break continue throw return))
+      ((eq? (operator expression) 'return) (return (myInitialize 'return (M_value (operant_1 expression) state break continue throw return) (M_state(operant_1 expression) state break continue throw return))))
       ((eq? (operator expression) 'if) (myIf expression state break continue throw return))
       ((eq? (operator expression) 'while) (call/cc (lambda (newBreak)
                                                    (myWhile expression state newBreak continue throw return))))
