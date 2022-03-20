@@ -1,15 +1,15 @@
 #lang racket
 (require "simpleParser.rkt")
 
+;remove a frame from state
 (define popFrame
   (lambda (state)
     (cdr state)))
 
+;add a frame to the top of state
 (define pushFrame
   (lambda (state)
     (cons '() state)))
-
-
 
 ;expression abstraction
 (define operator
@@ -28,7 +28,7 @@
   (lambda (expression)
     (cadddr expression)))
 
-;check if there is an else statement
+;check if there exists a third operand in a statement
 (define have_operant_3
   (lambda (expression)
     (not (null?(cdddr expression)))))
@@ -46,6 +46,7 @@
       ((null? (get_var_value_frame expression (car state))) (get_var_value expression (cdr state)))
       (else (get_var_value_frame expression (car state))))))
 
+;get variable of a frame
 (define get_var_value_frame
   (lambda (expression frame)
     (cond
@@ -160,9 +161,8 @@
       ((M_value (operant_1 expression) state break continue throw return) (myWhile expression (call/cc (lambda (newContinue) (M_state (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break newContinue throw return))) break continue throw return))
       (else (M_state (operant_1 expression) state break continue throw return)))))
 
-(define catchVar (lambda (catchStatement) (car (operant_1 catchStatement))))
-(define catchBody operant_2)
 
+;helper function to define new throw
 (define newThrowCatchHandler
   (lambda (catchStatement state break continue throw return jump finallyBlock)
     (cond 
@@ -180,6 +180,7 @@
                            break continue throw return)))))))
                                                         
 (define getCatchStatement operant_2)
+(define catchVar (lambda (catchStatement) (car (operant_1 catchStatement))))
 
 ;interpret try
 (define myTry
@@ -195,21 +196,18 @@
          (traverseStatements finallyBlock
                           (traverseStatements tryBlock state newBreak newContinue newThrow newReturn)
                           break continue throw return))))))
+
 (define statementType operator)
 
 (define getFinallyStatement operant_3)
 
 ;get the finally block
-;TODO: Fix
 (define getFinallyBlock
   (lambda (finallyStatement)
     (cond
       ((null? finallyStatement) '() )
       ((not (eq? (statementType finallyStatement) 'finally)) (error "Wrong finally format"))
       (else (cadr finallyStatement)))))
-
-
-
 
 ;check if expression have one operant
 (define have_one_operant?
@@ -234,6 +232,7 @@
       ((initializedFrame? var (car state)) #t)
       (else (initialized? var (cdr state))))))
 
+;check if variable in a frame has been initialized
 (define initializedFrame?
   (lambda (var frame)
     (cond
@@ -247,6 +246,7 @@
     (if (null? state) '()
         (cons (updateStateFrame var value (car state)) (updateState var value (cdr state))))))
 
+;helper function to update frame
 (define updateStateFrame
   (lambda (var value frame)
     (cond
@@ -285,7 +285,6 @@
     (error "Error of: " ex)))
 
 ;This method take in a filename, parse it into statements and traverse the state. Then return what is stored in the return variable.
-;TODO(Khoi): This probably need to refactor so that return can be called in a block and not got pop out of the stack
 (define runFile
   (lambda (filename)
     (parse_value (get_var_value 'return (call/cc (lambda (return) (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError return)))))))
@@ -334,7 +333,7 @@
                                             (lambda (state) (continue (popFrame state)))
                                             throw
                                             return)))
-      ((eq? (operator expression) 'break) (break state)) ;What if there is only 1 element and no new frame
+      ((eq? (operator expression) 'break) (break state))
       ((eq? (operator expression) 'continue) (continue state))
       ((eq? (operator expression) 'try) (myTry expression state break continue throw return))
       ((eq? (operator expression) 'throw) (throw (M_value (operant_1 expression) state break continue throw return) state))
