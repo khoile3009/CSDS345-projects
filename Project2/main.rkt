@@ -209,6 +209,58 @@
       ((not (eq? (statementType finallyStatement) 'finally)) (error "Wrong finally format"))
       (else (cadr finallyStatement)))))
 
+;interpret a function definition
+(define interpret_fundef
+  (lambda (expression env)
+    (myAssign
+     (operant_1 expression)
+     (cons (operant_2 expression) (cons (operant_3 expression) (cons (lambda () env) '())))
+     (myInitialize (operant_1 expression) '() env)
+     )))
+
+;interpret a function call
+(define interpret_funcall
+  (lambda (expression env break continue throw return)
+    (call/cc (lambda (ret)
+      (interpret_function
+        (cadr (lookup (operant_1 expression) env))
+        (bind_parameters
+          (cddr expression)
+          (car (lookup (operant_1 expression) env))
+          ((caddr (lookup (operant_1 expression) env)))
+          env
+          break continue throw return)
+        ret)
+      ))))
+
+;helper function look up a closure
+(define lookup
+  (lambda (name env)))
+
+;helper function bind actual parameters to formal parameters
+(define bind_parameters
+  (lambda (params formals fstate state break continue throw return)
+    (cond
+      ((and (null? params) (null? formals)) state)
+      ((or  (null? params) (null? formals)) (error "Invalid number of arguments"))
+      ((or (null? (cdr params)) (null? (cdr formals))) (myAssign
+        (car formals)
+        (M_value (car params) state break continue throw return)
+        (myInitialize (car formals) '() fstate)))
+      (else (myAssign
+        (car formals)
+        (M_value (car params) state break continue throw return)
+        (myInitialize
+          (car formals)
+          '()
+          (bind_parameters
+            (cdr params)
+            (cdr formals)
+            fstate
+            state
+            break continue throw return))))
+      )))
+
 ;check if expression have one operant
 (define have_one_operant?
   (lambda (expression)
@@ -362,6 +414,8 @@
           ((eq? (operator expression) '/) (myQuotient (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '=) (M_value (operant_2 expression) state break continue throw return))
+          ((eq? (operator expression) 'function) (interpret_fundef expression state))
+          ((eq? (operator expression) 'funcall) (interpret_funcall expression state))
           )          
         (cond
           ((eq? expression 'true) #t)
