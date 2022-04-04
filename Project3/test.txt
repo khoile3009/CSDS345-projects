@@ -1,0 +1,10 @@
+var x = 4;
+var y = 6 + x;
+
+function add(x, y) {
+  return x + y;
+}
+
+function main() {
+  return add(x, y);
+}
