@@ -231,7 +231,7 @@
     (cond
       ((null? state) #f)
       ((initializedFrame? var (car state)) #t)
-      (else (initialized? var (cdr state))))))
+      (else #f))))
 
 ;check if variable in a frame has been initialized
 (define initializedFrame?
@@ -329,7 +329,7 @@
 
 (define getFunctionCallParams
   (lambda (expression)
-    (caddr expression)))
+    (cddr expression)))
 
 (define addFunctionToState
   (lambda (expression state)
@@ -342,7 +342,7 @@
   (lambda (params state break continue throw return)
     (if (null? params)
         '()
-        (cons (M_value (car params) state break continue throw return) (evaluateParameters (cdr params) state break continue throw return))))
+        (cons (M_value (car params) state break continue throw return) (evaluateParameters (cdr params) state break continue throw return)))))
 
 (define addParamsToState
   (lambda (params values state)
