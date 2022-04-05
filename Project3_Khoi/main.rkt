@@ -46,6 +46,20 @@
       ((null? (get_var_value_frame expression (car state))) (get_var_value expression (cdr state)))
       (else (get_var_value_frame expression (car state))))))
 
+
+
+(define convertToFunctionDefinition
+  (lambda (func state)
+    (append func (list state))))
+
+(define getFunctionDefinitionAndScope
+  (lambda (fname state)
+    (cond
+      ((null? state) '())
+      ((null? (car state)) (getFunctionDefinitionAndScope fname (cdr state)))
+      ((eq? fname (car (car (car state)))) (convertToFunctionDefinition (pair_value (car (car state))) state))
+      (else (getFunctionDefinitionAndScope fname (cons (cdr (car state)) (cdr state)))))))
+
 ;get variable of a frame
 (define get_var_value_frame
   (lambda (expression frame)
@@ -141,7 +155,7 @@
 ;interpret =
 (define myAssign
   (lambda (var value state)
-    (if (initialized? var state)
+    (if (initialized*? var state)
         (updateState var value state)
         (error 'var "variable is not initialized"))))
 
@@ -225,13 +239,21 @@
   (lambda (var value state)
     (cons (cons (toKeyValuePair var value) (car state)) (cdr state))))
 
-;check if variable has been intitialized
+;check if variable has been intitialized first frame
 (define initialized?
   (lambda (var state)
     (cond
       ((null? state) #f)
       ((initializedFrame? var (car state)) #t)
       (else #f))))
+
+;initialized on all frame
+(define initialized*?
+  (lambda (var state)
+    (cond
+      ((null? state) #f)
+      ((initializedFrame? var (car state)) #t)
+      (else (initialized*? var (cdr state))))))
 
 ;check if variable in a frame has been initialized
 (define initializedFrame?
@@ -285,12 +307,6 @@
   (lambda (ex state)
     (error "Error of: " ex)))
 
-;This method take in a filename, parse it into statements and traverse the state. Then return what is stored in the return variable.
-;TODO: Fix this
-(define runFile
-  (lambda (filename)
-    (parse_value (get_var_value 'return (call/cc (lambda (return) (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError return)))))))
-
 (define getMainFunction
   (lambda (state)
     (if (get_var_value 'main state)
@@ -301,13 +317,13 @@
   (lambda (state)
     (error 'state "No function to return")))
 
-(define runFileTest
+(define runFile
   (lambda (filename)
     (let* ((state  (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError defaultReturn))
            (mainFunc (getMainFunction state))
            (statements (cadr mainFunc))
            (newState (pushFrame state)))
-      (get_var_value 'return (call/cc (lambda (newReturn) (traverseStatements statements newState noLoopError noLoopError defaultError newReturn)))))))
+     (parse_value  (get_var_value 'return (call/cc (lambda (newReturn) (traverseStatements statements newState noLoopError noLoopError defaultError newReturn))))))))
 
 
 
@@ -327,6 +343,11 @@
   (lambda (expression)
     (list (getFunctionParams expression) (getFuntionBody expression))))
 
+(define getParamsFromFunctionDefinition car)
+(define getStatementsFromFunctionDefinition cadr)
+(define getScopeFromFunctionDefinition caddr)
+
+
 (define getFunctionCallParams
   (lambda (expression)
     (cddr expression)))
@@ -335,6 +356,16 @@
   (lambda (expression state)
     (addToState (getFunctionName expression) (getFunctionDefinition expression) state)))
 
+(define updateStateAfterFunction
+  (lambda (fname scope state)
+    (cond
+      ((null? state) '())
+      ((null? (car state)) (cons '() (updateStateAfterFunction fname scope (cdr state))))
+      ((eq? fname (car (car (car state)))) scope)
+      (else (let* ((updatedState (updateStateAfterFunction fname scope (cons (cdr (car state)) (cdr state)))))
+                (cons (cons (car (car state)) (car updatedState)) (cdr updatedState)))))))
+      
+       
 
 ;Mvalue of a list of parameters
 ;TODO: Might change if left param m_value afect the state?
@@ -348,27 +379,31 @@
   (lambda (params values state)
     (cond
       ((and (null? params) (null? values)) state)
-      ((or (null? params) (null? values)) ('err 'params "params and values have different size"))
+      ((or (null? params) (null? values)) (error 'params "params and values have different size"))
       (else (addParamsToState (cdr params) (cdr values) (addToState (car params) (car values) state))))))
 
 (define getFunctionFromState
   (lambda (fname state)
     (if (null? (get_var_value fname state))
         (error 'fname "function not defined")
-        (get_var_value fname state))))
+        (getFunctionDefinitionAndScope fname state))))
       
 (define callFunction
   (lambda (expression state break continue throw return)
     (let* ((fname (getFunctionName expression))
            (func (getFunctionFromState fname state))
-           (params (car func))
-           (statements (cadr func))
+           (params (getParamsFromFunctionDefinition func))
+           (statements (getStatementsFromFunctionDefinition func))
+           (scope (getScopeFromFunctionDefinition func))
           (paramNames (getFunctionCallParams expression))
           (paramValues (evaluateParameters paramNames state break continue throw return))
-          (newState (addParamsToState params paramValues (pushFrame state))))
-      (get_var_value 'return (call/cc (lambda (newReturn) (traverseStatements statements newState break continue throw newReturn)))))))
+          (newState (addParamsToState params paramValues (pushFrame scope))))
+      (call/cc (lambda (newReturn) (traverseStatements statements newState break continue throw newReturn))))))
 
-
+(define getReturnValueFunction
+  (lambda (expression state break continue throw return)
+    (get_var_value 'return (callFunction expression state break continue throw return))))
+  
 
            
 ;M_state operation, this also consider nested equal sign
@@ -413,6 +448,7 @@
       ((eq? (operator expression) 'try) (myTry expression state break continue throw return))
       ((eq? (operator expression) 'throw) (throw (M_value (operant_1 expression) state break continue throw return) state))
       ((eq? (operator expression) 'function) (addFunctionToState expression state))
+      ((eq? (operator expression) 'funcall) (updateStateAfterFunction (cadr expression) (popFrame (callFunction expression state break continue throw return)) state))
       (else state)
       )))
 
@@ -438,7 +474,7 @@
           ((eq? (operator expression) '/) (myQuotient (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '=) (M_value (operant_2 expression) state break continue throw return))
-          ((eq? (operator expression) 'funcall) (callFunction expression state break continue throw return))
+          ((eq? (operator expression) 'funcall) (getReturnValueFunction expression state break continue throw return))
           )          
         (cond
           ((eq? expression 'true) #t)
