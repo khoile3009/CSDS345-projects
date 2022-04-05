@@ -263,19 +263,17 @@
       ((eq? var (car (car frame))) #t)
       (else (initializedFrame? var (cdr frame))))))
 
-;update state
+
 (define updateState
   (lambda (var value state)
-    (if (null? state) '()
-        (cons (updateStateFrame var value (car state)) (updateState var value (cdr state))))))
-
-;helper function to update frame
-(define updateStateFrame
-  (lambda (var value frame)
     (cond
-      ((null? frame) '())
-      ((eq? var (car (car frame))) (cons (toKeyValuePair var value) (cdr frame)))
-      (else (cons (car frame) (updateStateFrame var value (cdr frame)))))))
+      ((null? state) '())
+      ((null? (car state)) (cons '() (updateState var value (cdr state))))
+      ((eq? var (car (car (car state)))) (cons (cons (toKeyValuePair var value) (cdr (car state))) (cdr state)))
+      (else (let* ((updatedFollowing (updateState var value (cons (cdr (car state)) (cdr state)))))
+              (cons (cons (car (car state)) (car updatedFollowing)) (cdr updatedFollowing)))))))
+
+
 
 ;initialize variable with its value
 (define myInitialize
