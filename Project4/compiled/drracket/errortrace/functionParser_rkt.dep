@@ -1,0 +1,1 @@
+("8.3" ta6osx ("53e8af6a2d780027ab5b930f41e968818b9ce524" . "d775f4ec1e42d50d0ed1c430a09e3aea34dac099") #"/Users/nhantruong/Documents/PLC/Project/CSDS345-projects/Project4/lex.rkt" (collects #"errortrace" #"errortrace-key.rkt") (collects #"racket" #"main.rkt") (collects #"racket" #"runtime-config.rkt"))
