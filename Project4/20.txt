@@ -1,0 +1,16 @@
+class A {
+    var a = 10;
+    var b = 5;
+
+
+
+ 
+}
+
+class B extends A{
+    var a = 9;
+    var b = 4;
+    static function main(){
+	return new B().a;
+    }
+}

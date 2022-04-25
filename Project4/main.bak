@@ -1,5 +1,5 @@
 #lang racket
-(require "classParser.rkt")
+(require "functionParser.rkt")
 
 ;remove a frame from state
 (define popFrame
@@ -41,9 +41,8 @@
 ;get value of a variable
 (define get_var_value
   (lambda (expression state)
-     (cond
+    (cond
       ((null? state) '())
-      ((eq? expression 'this) (cdr state))
       ((null? (get_var_value_frame expression (car state))) (get_var_value expression (cdr state)))
       (else (get_var_value_frame expression (car state))))))
 
@@ -142,24 +141,15 @@
 ;interpret =
 (define myAssign
   (lambda (var value state)
-    (if (list? var)
-        (let* ((attributeName (caddr var))
-               (objectName (cadr var))
-               (objectState (get_var_value objectName state))
-               (updatedObject (if (initialized*? attributeName objectState)
-                                  (updateState attributeName value objectState)
-                                  (error 'var "Variable is not initialized"))))
-          (updateState objectName updatedObject state))     
     (if (initialized*? var state)
         (updateState var value state)
-        (error 'var "variable is not initialized")))))
+        (error 'var "variable is not initialized"))))
 
 ;update state with variable and value
 (define updateState
   (lambda (var value state)
     (cond
       ((null? state) '())
-      ((eq? var 'this) (cons (car state) value))
       ((null? (car state)) (cons '() (updateState var value (cdr state))))
       ((eq? var (car (car (car state)))) (cons (cons (toKeyValuePair var value) (cdr (car state))) (cdr state)))
       (else (let* ((updatedFollowing (updateState var value (cons (cdr (car state)) (cdr state)))))
@@ -322,15 +312,6 @@
            (newState (pushFrame state)))
       (parse_value  (get_var_value 'return (call/cc (lambda (newReturn) (traverseStatements statements newState noLoopError noLoopError defaultError newReturn))))))))
 
-(define interpret
-  (lambda (filename className)
-    (let* ((state (traverseStatements (parser filename) '(()) noLoopError noLoopError defaultError defaultReturn))
-           (classState (get_var_value className state))
-           (mainFunc (get_var_value 'main classState))
-           (statements (cadr mainFunc))
-           (newState (pushFrame state))
-           )
-      (parse_value  (get_var_value 'return (call/cc (lambda (newReturn) (traverseStatements statements newState noLoopError noLoopError defaultError newReturn))))))))
 
 ;Apply M_state of operant 1 to M_state of operant 2
 (define 2_operants_M_state
@@ -408,20 +389,14 @@
       ((eq? fname (car (car (car state)))) (convertToFunctionDefinition (pair_value (car (car state))) state))
       (else (getFunctionDefinitionAndScope fname (cons (cdr (car state)) (cdr state)))))))
 
-
-(define getScopeFromDotExpression
-  (lambda (dotExpression state)
-    (get_var_value (cadr dotExpression) state))) 
-
 ;process a function call and return a value with state
 (define callFunction
   (lambda (expression state break continue throw return)
     (let* ((fname (getFunctionName expression))
-           (func (M_value (cadr expression) state break continue throw return))
+           (func (getFunctionFromState fname state))
            (params (getParamsFromFunctionDefinition func))
            (statements (getStatementsFromFunctionDefinition func))
-           (objectName (cadr fname))
-           (scope (M_value objectName state break continue throw return))
+           (scope (getScopeFromFunctionDefinition func))
            (paramNames (getFunctionCallParams expression))
            (paramValues (evaluateParameters paramNames state break continue throw return))
            (newState (addParamsToState params paramValues (pushFrame scope)))
@@ -430,13 +405,8 @@
            (newThrow (lambda (ex s1) (throw ex (updateStateAfterFunction fname (popFrame s1) state))))
            (returnedState (call/cc (lambda (newReturn) (traverseStatements statements newState newBreak newContinue newThrow newReturn))))
            (returnValue (get_var_value 'return returnedState))
-           (mergedState (updateState objectName (popFrame returnedState) state)))
+           (mergedState (updateStateAfterFunction fname (popFrame returnedState) state)))
       (list returnValue mergedState))))
-
-
-(define getDotFunctionName
-  (lambda (expression)
-    (caddr (cadr expression))))
 
 ;M_state of a function call
 (define M_state_function
@@ -447,33 +417,7 @@
 (define M_value_function
   (lambda (expression state break continue throw return)
     (car (callFunction expression state break continue throw return))))
-
-(define className cadr)
-(define classExtends caddr)
-(define classBody cadddr)
-
-; TODO: Separate static and function
-(define createClassFrame
-  (lambda (extends body state break continue throw return)
-    (let ((extendedClassFrame (if (null? extends) '(()) (get_var_value (cadr extends) state))))
-      (traverseStatements body (pushFrame extendedClassFrame) break continue throw return))))
-       
-(define addClassToState
-  (lambda (name extends body state break continue throw return)
-    (addToState name (createClassFrame extends body state break continue throw return) state)))
-
-(define createClassObject
-  (lambda (className state)
-    (let* ((classDefinition (get_var_value className state)))
-      classDefinition)))
-
-(define M_value_object
-  (lambda (objectName attributeName state break continue throw return)
-    (let* ((objectState (M_value objectName state break continue throw return)))
-      (M_value attributeName objectState break continue throw return))))
-             
            
-
 ;M_state operation, this also consider nested equal sign
 (define M_state
   (lambda (expression state break continue throw return)
@@ -517,9 +461,6 @@
       ((eq? (operator expression) 'throw) (throw (M_value (operant_1 expression) state break continue throw return) state))
       ((eq? (operator expression) 'function) (addFunctionToState expression state))
       ((eq? (operator expression) 'funcall) (M_state_function expression state break continue throw return))
-      ((eq? (operator expression) 'class) (addClassToState (className expression) (classExtends expression) (classBody expression) state break continue throw return))
-      ((eq? (operator expression) 'static-function) (addFunctionToState expression state))
-      
       (else state)
       )))
 
@@ -546,9 +487,6 @@
           ((eq? (operator expression) '%) (myRemainder (M_value (operant_1 expression) state break continue throw return) (M_value (operant_2 expression) (M_state (operant_1 expression) state break continue throw return) break continue throw return)))
           ((eq? (operator expression) '=) (M_value (operant_2 expression) state break continue throw return))
           ((eq? (operator expression) 'funcall) (M_value_function expression state break continue throw return))
-          ((eq? (operator expression) 'new) (createClassObject (cadr expression) state))
-          ((eq? (operator expression) 'dot) (M_value_object (cadr expression) (caddr expression) state break continue throw return))
-          ((eq? (operator expression) 'this) (cdr state))
           )          
         (cond
           ((eq? expression 'true) #t)
